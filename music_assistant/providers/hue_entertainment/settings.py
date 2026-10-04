@@ -9,10 +9,12 @@ from .constants import (
     CONF_COLOR_MODE,
     CONF_COLOR_VIVIDNESS,
     CONF_HUE_LATENCY_MS,
+    CONF_PALETTE_SCHEME,
     DEFAULT_BRIGHTNESS,
     DEFAULT_COLOR_MODE,
     DEFAULT_COLOR_VIVIDNESS,
     DEFAULT_HUE_LATENCY_MS,
+    DEFAULT_PALETTE_SCHEME,
 )
 
 if TYPE_CHECKING:
@@ -27,6 +29,16 @@ def get_color_mode(config: ProviderConfig) -> str:
     """
     value = config.get_value(CONF_COLOR_MODE)
     return DEFAULT_COLOR_MODE if value is None else str(value)
+
+
+def get_palette_scheme(config: ProviderConfig) -> str:
+    """
+    Return the configured palette scheme.
+
+    :param config: Provider config to read the setting from.
+    """
+    value = config.get_value(CONF_PALETTE_SCHEME)
+    return DEFAULT_PALETTE_SCHEME if value is None else str(value)
 
 
 def get_brightness(config: ProviderConfig) -> int:

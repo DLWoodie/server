@@ -46,6 +46,7 @@ from .settings import (
     get_color_mode,
     get_color_vividness,
     get_hue_latency_ms,
+    get_palette_scheme,
 )
 
 if TYPE_CHECKING:
@@ -120,6 +121,7 @@ class HueEntertainmentBridge:
             color_mode=get_color_mode(self.provider.config),
             brightness=get_brightness(self.provider.config),
             vividness=get_color_vividness(self.provider.config),
+            palette_scheme=get_palette_scheme(self.provider.config),
         )
 
         client_id = f"hue-{self.area.id.replace('-', '')[:16]}"
@@ -220,6 +222,7 @@ class HueEntertainmentBridge:
         color_mode: str | None = None,
         brightness: int | None = None,
         vividness: int | None = None,
+        palette_scheme: str | None = None,
         hue_latency_ms: int | None = None,
     ) -> None:
         """Update analyzer/bridge settings without restarting the bridge."""
@@ -228,6 +231,7 @@ class HueEntertainmentBridge:
                 color_mode=color_mode,
                 brightness=brightness,
                 vividness=vividness,
+                palette_scheme=palette_scheme,
             )
         if hue_latency_ms is not None:
             self._hue_latency_us = hue_latency_ms * 1000
@@ -504,6 +508,7 @@ class HueEntertainmentBridgeManager:
         color_mode: str | None = None,
         brightness: int | None = None,
         vividness: int | None = None,
+        palette_scheme: str | None = None,
         hue_latency_ms: int | None = None,
     ) -> None:
         """Update settings on all bridges."""
@@ -512,6 +517,7 @@ class HueEntertainmentBridgeManager:
                 color_mode=color_mode,
                 brightness=brightness,
                 vividness=vividness,
+                palette_scheme=palette_scheme,
                 hue_latency_ms=hue_latency_ms,
             )
 

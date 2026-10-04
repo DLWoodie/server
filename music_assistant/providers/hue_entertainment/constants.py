@@ -12,12 +12,25 @@ CONF_CLIENTKEY: Final[str] = "hue_clientkey"
 CONF_BRIGHTNESS: Final[str] = "brightness"
 CONF_COLOR_MODE: Final[str] = "color_mode"
 CONF_COLOR_VIVIDNESS: Final[str] = "color_vividness"
+CONF_PALETTE_SCHEME: Final[str] = "palette_scheme"
 CONF_HUE_LATENCY_MS: Final[str] = "hue_latency_ms"
 
 # Visualization modes; first entry is the default. Used to build the config
 # options and to migrate away orphaned stored values from older versions.
 COLOR_MODES: Final[tuple[str, ...]] = ("smooth", "ambient", "flashing", "energetic")
 DEFAULT_COLOR_MODE: Final[str] = COLOR_MODES[0]
+
+# Palette schemes; first entry is the default. "artwork" cycles the album art's
+# own colors, every other scheme generates the palette (see the analyzer).
+PALETTE_SCHEMES: Final[tuple[str, ...]] = (
+    "artwork",
+    "triadic",
+    "tetradic",
+    "complementary",
+    "analogous",
+    "fixed",
+)
+DEFAULT_PALETTE_SCHEME: Final[str] = PALETTE_SCHEMES[0]
 
 DEFAULT_BRIGHTNESS: Final[int] = 100
 

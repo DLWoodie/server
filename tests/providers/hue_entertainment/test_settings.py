@@ -24,10 +24,13 @@ from music_assistant.providers.hue_entertainment.constants import (
     CONF_COLOR_MODE,
     CONF_COLOR_VIVIDNESS,
     CONF_HUE_LATENCY_MS,
+    CONF_PALETTE_SCHEME,
     DEFAULT_BRIGHTNESS,
     DEFAULT_COLOR_MODE,
     DEFAULT_COLOR_VIVIDNESS,
     DEFAULT_HUE_LATENCY_MS,
+    DEFAULT_PALETTE_SCHEME,
+    PALETTE_SCHEMES,
 )
 from music_assistant.providers.hue_entertainment.provider import HueEntertainmentProvider
 from music_assistant.providers.hue_entertainment.settings import (
@@ -35,6 +38,7 @@ from music_assistant.providers.hue_entertainment.settings import (
     get_color_mode,
     get_color_vividness,
     get_hue_latency_ms,
+    get_palette_scheme,
 )
 
 # the provider's strings live next to its constants module
@@ -91,6 +95,11 @@ def test_get_color_mode() -> None:
     assert get_color_mode(_config(**{CONF_COLOR_MODE: "ambient"})) == "ambient"
 
 
+def test_get_palette_scheme() -> None:
+    """Palette scheme is read as-is."""
+    assert get_palette_scheme(_config(**{CONF_PALETTE_SCHEME: "triadic"})) == "triadic"
+
+
 @pytest.mark.parametrize(
     ("reader", "default"),
     [
@@ -98,8 +107,9 @@ def test_get_color_mode() -> None:
         (get_hue_latency_ms, DEFAULT_HUE_LATENCY_MS),
         (get_color_mode, DEFAULT_COLOR_MODE),
         (get_color_vividness, DEFAULT_COLOR_VIVIDNESS),
+        (get_palette_scheme, DEFAULT_PALETTE_SCHEME),
     ],
-    ids=["brightness", "latency", "color_mode", "color_vividness"],
+    ids=["brightness", "latency", "color_mode", "color_vividness", "palette_scheme"],
 )
 def test_unset_setting_falls_back_to_default(
     reader: Callable[[ProviderConfig], int | str], default: int | str
@@ -108,9 +118,10 @@ def test_unset_setting_falls_back_to_default(
     assert reader(_config()) == default
 
 
-async def test_every_setting_is_translated() -> None:
-    """Each settings entry has its label and description in strings.json."""
+async def test_every_setting_and_scheme_is_translated() -> None:
+    """Each settings entry has its label and description, and each scheme its title."""
     strings = json.loads(_STRINGS_PATH.read_text(encoding="utf-8"))["config_entries"]
     provider = HueEntertainmentProvider.__new__(HueEntertainmentProvider)
     for entry in await provider.get_config_entries():
         assert {"label", "description"} <= strings[entry.key].keys()
+    assert list(strings[CONF_PALETTE_SCHEME]["options"]) == list(PALETTE_SCHEMES)

@@ -22,6 +22,7 @@ from music_assistant.providers.hue_entertainment.constants import (
     CONF_BRIGHTNESS,
     CONF_COLOR_MODE,
     CONF_COLOR_VIVIDNESS,
+    CONF_PALETTE_SCHEME,
 )
 
 if TYPE_CHECKING:
@@ -40,11 +41,12 @@ def _make_bridge(values: dict[str, ConfigValueType]) -> HueEntertainmentBridge:
 
 
 def _assert_analyzer_settings(analyzer: HueAudioAnalyzer | None) -> None:
-    """Assert ``analyzer`` runs on ambient, brightness 40 and vividness 100."""
+    """Assert ``analyzer`` runs on ambient, brightness 40, vividness 100 and triadic."""
     assert analyzer is not None
     assert analyzer._color_mode == "ambient"
     assert analyzer._brightness == 0.4
     assert analyzer._saturation == HueAudioAnalyzer([], vividness=100)._saturation
+    assert analyzer._palette_scheme == "triadic"
 
 
 async def test_start_builds_the_analyzer_from_the_config() -> None:
@@ -54,6 +56,7 @@ async def test_start_builds_the_analyzer_from_the_config() -> None:
             CONF_COLOR_MODE: "ambient",
             CONF_BRIGHTNESS: 40,
             CONF_COLOR_VIVIDNESS: 100,
+            CONF_PALETTE_SCHEME: "triadic",
         }
     )
     await bridge.start()
@@ -66,5 +69,7 @@ def test_live_settings_reach_every_bridge_analyzer() -> None:
     bridge._analyzer = HueAudioAnalyzer(bridge.area.channels)
     manager = HueEntertainmentBridgeManager(bridge.provider)
     manager._bridges[bridge.area.id] = bridge
-    manager.update_settings(color_mode="ambient", brightness=40, vividness=100)
+    manager.update_settings(
+        color_mode="ambient", brightness=40, vividness=100, palette_scheme="triadic"
+    )
     _assert_analyzer_settings(bridge._analyzer)

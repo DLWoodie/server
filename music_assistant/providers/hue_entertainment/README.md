@@ -69,6 +69,7 @@ The Hue REST API, DTLS streamer, `EntertainmentSession` and data models
 | `bridge_host` | String | — | Bridge IP (auto-discovered via mDNS) |
 | `brightness` | Integer | 100 | Overall light brightness (0-100) |
 | `color_mode` | String | smooth | Visualization mode (smooth / ambient / flashing / energetic) |
+| `palette_scheme` | String | artwork | Color source (artwork / triadic / tetradic / complementary / analogous / fixed) |
 | `color_vividness` | Integer | 50 | Color saturation, from pale tints (0) to full color (100) |
 | `hue_latency_ms` | Integer | 20 | Lead time lights render ahead of the playhead (0-3000) |
 

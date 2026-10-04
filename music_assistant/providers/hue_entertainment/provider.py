@@ -27,17 +27,21 @@ from .constants import (
     CONF_COLOR_MODE,
     CONF_COLOR_VIVIDNESS,
     CONF_HUE_LATENCY_MS,
+    CONF_PALETTE_SCHEME,
     CONF_USERNAME,
     DEFAULT_BRIGHTNESS,
     DEFAULT_COLOR_MODE,
     DEFAULT_COLOR_VIVIDNESS,
     DEFAULT_HUE_LATENCY_MS,
+    DEFAULT_PALETTE_SCHEME,
+    PALETTE_SCHEMES,
 )
 from .settings import (
     get_brightness,
     get_color_mode,
     get_color_vividness,
     get_hue_latency_ms,
+    get_palette_scheme,
 )
 
 if TYPE_CHECKING:
@@ -86,6 +90,13 @@ class HueEntertainmentProvider(PluginProvider):
                 type=ConfigEntryType.STRING,
                 default_value=DEFAULT_COLOR_MODE,
                 options=[ConfigValueOption(mode, title=mode.capitalize()) for mode in COLOR_MODES],
+                category="settings",
+            ),
+            ConfigEntry(
+                key=CONF_PALETTE_SCHEME,
+                type=ConfigEntryType.STRING,
+                default_value=DEFAULT_PALETTE_SCHEME,
+                options=[ConfigValueOption(value=scheme) for scheme in PALETTE_SCHEMES],
                 category="settings",
             ),
             ConfigEntry(
@@ -238,6 +249,7 @@ class HueEntertainmentProvider(PluginProvider):
                 CONF_BRIGHTNESS,
                 CONF_COLOR_MODE,
                 CONF_COLOR_VIVIDNESS,
+                CONF_PALETTE_SCHEME,
                 CONF_HUE_LATENCY_MS,
             )
         }
@@ -246,6 +258,7 @@ class HueEntertainmentProvider(PluginProvider):
                 color_mode=get_color_mode(config),
                 brightness=get_brightness(config),
                 vividness=get_color_vividness(config),
+                palette_scheme=get_palette_scheme(config),
                 hue_latency_ms=get_hue_latency_ms(config),
             )
             self.config = config

@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 from hue_entertainment import LightColorCommand
 
-from .constants import DEFAULT_COLOR_VIVIDNESS
+from .constants import DEFAULT_COLOR_VIVIDNESS, DEFAULT_PALETTE_SCHEME
 
 if TYPE_CHECKING:
     from aiosendspin.models.visualizer import BeatTiming
@@ -89,6 +89,27 @@ _NEUTRAL_GRADIENT: list[tuple[float, float, float]] = [
     (0.86, 0.93, 1.0),  # cool white
     (0.90, 0.90, 0.92),  # soft grey
 ]
+
+# Hues each generated palette scheme places around the cover's seed hue, in
+# cycle order, as fractions of the color wheel.
+_SCHEME_HUE_OFFSETS: dict[str, tuple[float, ...]] = {
+    "triadic": (0.0, 1 / 3, 2 / 3),
+    "tetradic": (0.0, 1 / 4, 1 / 2, 3 / 4),
+    "complementary": (0.0, 1 / 2),
+    "analogous": (-1 / 12, 0.0, 1 / 12),
+}
+# The fixed scheme ignores the cover and cycles evenly spaced hues, which the
+# other schemes also fall back to when the cover has no seed hue.
+_FIXED_SCHEME = "fixed"
+_FIXED_HUES: tuple[float, ...] = (0.0, 1 / 6, 1 / 3, 1 / 2, 2 / 3, 5 / 6)
+_GENERATED_SCHEMES = frozenset({*_SCHEME_HUE_OFFSETS, _FIXED_SCHEME})
+
+# color@v1 fields the seed hue is taken from; the others are text and
+# background roles.
+_SEED_SOURCE_FIELDS: tuple[str, ...] = ("primary", "accent")
+
+# Generated colors reach full saturation exactly at the top of the palette boost.
+_GENERATED_SATURATION = 1.0 / _PALETTE_BOOST_ANCHORS[2]
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,6 +305,7 @@ class HueAudioAnalyzer:
         color_mode: str = DEFAULT_MODE,
         brightness: int = 100,
         vividness: int = DEFAULT_COLOR_VIVIDNESS,
+        palette_scheme: str = DEFAULT_PALETTE_SCHEME,
     ) -> None:
         """
         Initialize the analyzer.
@@ -291,12 +313,15 @@ class HueAudioAnalyzer:
         ``color_mode`` selects a preset bundle from `_MODES` (defaults to
         `DEFAULT_MODE` when unknown); reactivity is governed by that preset.
         ``vividness`` (0-100) scales how saturated the rendered colors are.
+        ``palette_scheme`` either cycles the album's own colors (the default,
+        also used for an unknown scheme) or generates the palette.
         """
         self._channels = channels
         self._color_mode = color_mode
         self._mode = _MODES.get(color_mode, _MODES[DEFAULT_MODE])
         self._brightness = max(0, min(100, brightness)) / 100.0
         self._saturation = _saturation_profile(vividness)
+        self._palette_scheme = palette_scheme
 
         self._server_palette: dict[str, tuple[int, int, int] | None] = {}
         # Built on first use, reset whenever an input to it changes.
@@ -349,6 +374,7 @@ class HueAudioAnalyzer:
         color_mode: str | None = None,
         brightness: int | None = None,
         vividness: int | None = None,
+        palette_scheme: str | None = None,
     ) -> None:
         """Update settings without reset."""
         self._palette = None
@@ -364,6 +390,8 @@ class HueAudioAnalyzer:
             self._bass_saturation = min(
                 self._saturation.bass_max, max(self._saturation.bass_min, self._bass_saturation)
             )
+        if palette_scheme is not None:
+            self._palette_scheme = palette_scheme
 
     # -- Input events --
 
@@ -807,15 +835,18 @@ class HueAudioAnalyzer:
         """
         if self._palette is not None:
             return self._palette
-        raw, synthesized = self._gather_raw_palette()
-        ordered = _order_palette(raw)
         max_pulse = max(self._mode.pulse_peak, self._mode.downbeat_pulse_peak)
-        equalized = _equalize_palette(ordered, max_pulse)
-        if synthesized:
-            palette = equalized
+        if self._palette_scheme in _GENERATED_SCHEMES:
+            # Generated hues are already in cycle order and spaced apart.
+            palette = _equalize_palette(self._generated_palette(), max_pulse)
         else:
-            deduped = _drop_close_neighbours(equalized, _PALETTE_DEDUP_DISTANCE)
-            palette = _enforce_neighbour_contrast(deduped, deduped)
+            raw, synthesized = self._gather_raw_palette()
+            equalized = _equalize_palette(_order_palette(raw), max_pulse)
+            if synthesized:
+                palette = equalized
+            else:
+                deduped = _drop_close_neighbours(equalized, _PALETTE_DEDUP_DISTANCE)
+                palette = _enforce_neighbour_contrast(deduped, deduped)
         # Boosted last, so vividness never changes which colors the passes above
         # keep; skipped at 1.0, where the HSV round trip would perturb the last bits.
         boost = self._saturation.palette_boost
@@ -862,6 +893,16 @@ class HueAudioAnalyzer:
             seed = max(chromatic, key=lambda c: colorsys.rgb_to_hsv(*c)[1])
             return _build_shade_palette(seed), True
         return list(_NEUTRAL_GRADIENT), True
+
+    def _generated_palette(self) -> list[tuple[float, float, float]]:
+        """Return the palette scheme's hues around the cover's seed hue, in cycle order."""
+        offsets = _SCHEME_HUE_OFFSETS.get(self._palette_scheme)
+        seed_hue = None if offsets is None else _seed_hue(self._server_palette)
+        if offsets is None or seed_hue is None:
+            hues = _FIXED_HUES
+        else:
+            hues = tuple((seed_hue + offset) % 1.0 for offset in offsets)
+        return [colorsys.hsv_to_rgb(hue, _GENERATED_SATURATION, 1.0) for hue in hues]
 
     @staticmethod
     def _to_command(channel_id: int, r: float, g: float, b: float) -> LightColorCommand:
@@ -981,6 +1022,28 @@ def _distinct_hue_count(colors: list[tuple[float, float, float]]) -> int:
     if families > 1 and (hues[0] + 1.0 - hues[-1]) <= _HUE_DISTINCT:
         families -= 1
     return families
+
+
+def _seed_hue(server_palette: dict[str, tuple[int, int, int] | None]) -> float | None:
+    """
+    Return the hue of the more colorful of the cover's seed fields, if either has a hue.
+
+    :param server_palette: The cached color@v1 fields.
+    """
+    seeds = [
+        (value[0] / 255.0, value[1] / 255.0, value[2] / 255.0)
+        for name in _SEED_SOURCE_FIELDS
+        if (value := server_palette.get(name)) is not None
+    ]
+    chromatic = [
+        rgb
+        for rgb in seeds
+        if max(rgb) >= _BLACK_DROP_THRESHOLD and colorsys.rgb_to_hsv(*rgb)[1] >= _PALETTE_MIN_SAT
+    ]
+    if not chromatic:
+        return None
+    # Ranked by chroma, because HSV saturation rates a near-black red as vivid.
+    return colorsys.rgb_to_hsv(*max(chromatic, key=_vibrancy))[0]
 
 
 def _build_shade_palette(

@@ -15,6 +15,18 @@
       "label": "Mode",
       "description": "Visualization style. Smooth (default): spectrum-driven brightness with a slowly drifting palette. Ambient: colour cycling only, no brightness modulation. Flashing: brightness pulse on every beat, stronger on downbeats. Energetic: large brightness swings on hits plus fast palette rotation."
     },
+    "palette_scheme": {
+      "label": "Palette scheme",
+      "description": "Where the light colors come from. Artwork (default): cycle the album art's own colors. Triadic, Tetradic, Complementary and Analogous: generate colors around the color wheel from the art's main color, as three or four evenly spaced hues, the color and its opposite, or the color and its close neighbors. Fixed: six colors evenly spaced around the color wheel, ignoring the art; the other generated schemes use them too for no or black and white artwork.",
+      "options": {
+        "artwork": "Artwork",
+        "triadic": "Triadic",
+        "tetradic": "Tetradic",
+        "complementary": "Complementary",
+        "analogous": "Analogous",
+        "fixed": "Fixed"
+      }
+    },
     "color_vividness": {
       "label": "Color vividness",
       "description": "How saturated the lights render their colors, from pale tints at 0 to full color at 100. The default of 50 keeps the original look; raise it if the lights look washed out."

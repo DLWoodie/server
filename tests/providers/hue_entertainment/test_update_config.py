@@ -1,8 +1,8 @@
 """
 Tests for ``HueEntertainmentProvider.update_config`` routing.
 
-Brightness, color mode, vividness and latency are applied to the running
-bridges bridges in place; anything else falls through to the base
+Brightness, color mode, palette scheme, vividness and latency are applied to
+the running bridges in place; anything else falls through to the base
 implementation, which reloads the provider and therefore drops the
 entertainment session and the virtual players. The changed keys are derived
 from the real ``Config.update()`` here rather than hardcoded, so the test keeps
@@ -26,6 +26,7 @@ from music_assistant.providers.hue_entertainment.constants import (
     CONF_COLOR_MODE,
     CONF_COLOR_VIVIDNESS,
     CONF_HUE_LATENCY_MS,
+    CONF_PALETTE_SCHEME,
 )
 from music_assistant.providers.hue_entertainment.provider import HueEntertainmentProvider
 
@@ -80,23 +81,26 @@ async def test_settings_change_applies_in_place() -> None:
     [
         ({CONF_COLOR_MODE: "ambient"}, {"color_mode": "ambient"}),
         ({CONF_COLOR_VIVIDNESS: 100}, {"vividness": 100}),
+        ({CONF_PALETTE_SCHEME: "triadic"}, {"palette_scheme": "triadic"}),
         ({CONF_HUE_LATENCY_MS: 120}, {"hue_latency_ms": 120}),
         (
             {
                 CONF_BRIGHTNESS: 0,
                 CONF_COLOR_MODE: "ambient",
                 CONF_COLOR_VIVIDNESS: 0,
+                CONF_PALETTE_SCHEME: "fixed",
                 CONF_HUE_LATENCY_MS: 0,
             },
             {
                 "brightness": 0,
                 "color_mode": "ambient",
                 "vividness": 0,
+                "palette_scheme": "fixed",
                 "hue_latency_ms": 0,
             },
         ),
     ],
-    ids=["color_mode", "vividness", "latency", "all_settings_at_once"],
+    ids=["color_mode", "vividness", "palette_scheme", "latency", "all_settings_at_once"],
 )
 async def test_every_in_place_setting_skips_the_reload(
     update: dict[str, ConfigValueType], expected: dict[str, ConfigValueType]

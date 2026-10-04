@@ -11,13 +11,18 @@ from hue_entertainment import LightChannel, LightColorCommand
 
 from music_assistant.providers.hue_entertainment import analyzer as analyzer_module
 from music_assistant.providers.hue_entertainment.analyzer import (
+    _GENERATED_SCHEMES,
     _NEUTRAL_GRADIENT,
     DEFAULT_MODE,
     HueAudioAnalyzer,
     _distinct_hue_count,
     _ScheduledBeat,
 )
-from music_assistant.providers.hue_entertainment.constants import DEFAULT_COLOR_VIVIDNESS
+from music_assistant.providers.hue_entertainment.constants import (
+    DEFAULT_COLOR_VIVIDNESS,
+    DEFAULT_PALETTE_SCHEME,
+    PALETTE_SCHEMES,
+)
 
 
 def _make_channels(count: int) -> list[LightChannel]:
@@ -47,6 +52,23 @@ _VIVID_PALETTE: dict[str, tuple[int, int, int]] = {
     "primary": (255, 0, 0),
     "accent": (0, 0, 255),
 }
+# The magenta background role out-saturates both color roles, so it must not seed.
+_COLORFUL_COVER: dict[str, tuple[int, int, int]] = {
+    "primary": (40, 200, 160),
+    "accent": (60, 80, 220),
+    "on_dark": (250, 250, 250),
+    "on_light": (20, 20, 20),
+    "background_dark": (200, 0, 200),
+    "background_light": (240, 220, 240),
+}
+_MONOCHROME_COVER: dict[str, tuple[int, int, int]] = {
+    "primary": (200, 200, 200),
+    "accent": (90, 90, 90),
+    "background_dark": (200, 0, 200),
+}
+# Written out rather than imported, so a wrong hue in the analyzer fails here.
+_EVENLY_SPACED_HUES = [0.0, 1 / 6, 1 / 3, 1 / 2, 2 / 3, 5 / 6]
+_SEEDED_SCHEMES = ["triadic", "tetradic", "complementary", "analogous"]
 
 
 class TestSettings:
@@ -401,6 +423,128 @@ class TestVividness:
         assert analyzer._active_palette() != before
 
 
+class TestPaletteScheme:
+    """Tests for the palette schemes that generate colors from the cover's seed hue."""
+
+    def test_artwork_is_the_default(self) -> None:
+        """An untouched install keeps cycling the album's own colors."""
+        assert DEFAULT_PALETTE_SCHEME == "artwork"
+        assert HueAudioAnalyzer(_make_channels(1))._palette_scheme == "artwork"
+
+    def test_every_offered_scheme_is_known_to_the_analyzer(self) -> None:
+        """The config options and the analyzer's schemes must not drift apart."""
+        assert set(PALETTE_SCHEMES) == {"artwork", *_GENERATED_SCHEMES}
+
+    @pytest.mark.parametrize(
+        ("scheme", "offsets"),
+        [
+            ("triadic", [0.0, 1 / 3, 2 / 3]),
+            ("tetradic", [0.0, 1 / 4, 1 / 2, 3 / 4]),
+            ("complementary", [0.0, 1 / 2]),
+            ("analogous", [-1 / 12, 0.0, 1 / 12]),
+        ],
+    )
+    def test_scheme_cycles_its_hues_around_the_seed_in_order(
+        self, scheme: str, offsets: list[float]
+    ) -> None:
+        """Each scheme cycles its own hues, in order, around the primary's hue."""
+        palette = _scheme_analyzer(scheme, _COLORFUL_COVER)._active_palette()
+        seed = _hue(_COLORFUL_COVER["primary"])
+        assert [_hue_of(color) for color in palette] == pytest.approx(
+            [(seed + offset) % 1.0 for offset in offsets]
+        )
+
+    @pytest.mark.parametrize("cover", [_COLORFUL_COVER, _MONOCHROME_COVER], ids=["color", "mono"])
+    def test_fixed_cycles_evenly_spaced_hues_whatever_the_cover(
+        self, cover: dict[str, tuple[int, int, int]]
+    ) -> None:
+        """The fixed scheme ignores the art and cycles its hues in wheel order."""
+        palette = _scheme_analyzer("fixed", cover)._active_palette()
+        assert [_hue_of(color) for color in palette] == pytest.approx(_EVENLY_SPACED_HUES)
+
+    @pytest.mark.parametrize("scheme", [*_SEEDED_SCHEMES, "fixed"])
+    def test_generated_colors_are_neither_dropped_nor_dimmed(self, scheme: str) -> None:
+        """Every generated color reaches the lamps at the same equalized brightness."""
+        palette = _scheme_analyzer(scheme, _COLORFUL_COVER)._active_palette()
+        assert len({round(max(color), 6) for color in palette}) == 1
+
+    def test_the_more_colorful_role_seeds_the_palette(self) -> None:
+        """A muted primary gives way to a vivid accent."""
+        cover = {"primary": (150, 120, 110), "accent": (30, 60, 220)}
+        seed = _scheme_analyzer("complementary", cover)._active_palette()[0]
+        assert _hue_of(seed) == pytest.approx(_hue(cover["accent"]))
+
+    def test_a_near_black_role_does_not_seed_the_palette(self) -> None:
+        """A near-black primary loses to a visible accent, however high its HSV saturation."""
+        cover = {"primary": (20, 4, 4), "accent": (230, 150, 120)}
+        seed = _scheme_analyzer("complementary", cover)._active_palette()[0]
+        assert _hue_of(seed) == pytest.approx(_hue(cover["accent"]))
+
+    @pytest.mark.parametrize("scheme", _SEEDED_SCHEMES)
+    @pytest.mark.parametrize(
+        "cover", [{}, _MONOCHROME_COVER], ids=["empty_server_palette", "monochrome_cover"]
+    )
+    def test_without_a_seed_hue_the_fixed_hues_are_used(
+        self, scheme: str, cover: dict[str, tuple[int, int, int]]
+    ) -> None:
+        """No artwork, or black and white artwork, gets the fixed hues instead of tinted whites."""
+        palette = _scheme_analyzer(scheme, cover)._active_palette()
+        assert [_hue_of(color) for color in palette] == pytest.approx(_EVENLY_SPACED_HUES)
+
+    def test_unknown_scheme_cycles_the_album_colors(self) -> None:
+        """A scheme the analyzer does not know behaves like the default."""
+        unknown = _scheme_analyzer("no-such-scheme", _COLORFUL_COVER)._active_palette()
+        assert unknown == _scheme_analyzer("artwork", _COLORFUL_COVER)._active_palette()
+
+    def test_update_settings_switches_the_scheme_live(self) -> None:
+        """A live change replaces the cached palette; other updates leave the scheme alone."""
+        analyzer = _scheme_analyzer("artwork", _COLORFUL_COVER)
+        analyzer._active_palette()
+        analyzer.update_settings(palette_scheme="tetradic")
+        analyzer.update_settings(color_mode="ambient")
+        assert len(analyzer._active_palette()) == 4
+
+    def test_a_new_cover_reseeds_the_cached_palette(self) -> None:
+        """A color@v1 update replaces the cached palette."""
+        analyzer = _scheme_analyzer("complementary", _COLORFUL_COVER)
+        analyzer._active_palette()
+        analyzer.apply_color_palette({"primary": (200, 30, 30)})
+        assert _hue_of(analyzer._active_palette()[0]) == pytest.approx(_hue((200, 30, 30)))
+
+    def test_vividness_spans_its_whole_range_on_generated_palettes(self) -> None:
+        """Every step up in vividness raises a generated palette's saturation, to full color."""
+        analyzer = _scheme_analyzer("triadic", _COLORFUL_COVER)
+        saturations = []
+        for vividness in (0, 25, 50, 75, 100):
+            analyzer.update_settings(vividness=vividness)
+            saturations.append(colorsys.rgb_to_hsv(*analyzer._active_palette()[0])[1])
+        assert all(a < b for a, b in itertools.pairwise(saturations))
+        assert saturations[-1] == pytest.approx(1.0)
+
+    def test_a_generated_palette_follows_vividness_through_the_render(self) -> None:
+        """Vividness scales a generated palette's rendered saturation like the album's."""
+        pale, default, vivid = (
+            _rendered_saturation(vividness, _COLORFUL_COVER, palette_scheme="triadic")
+            for vividness in (0, DEFAULT_COLOR_VIVIDNESS, 100)
+        )
+        assert pale < default < vivid
+
+    def test_a_generated_hue_survives_the_palest_setting(self) -> None:
+        """Turning vividness down pales the generated colors without moving their hues."""
+        generated = _scheme_analyzer("triadic", _COLORFUL_COVER)._active_palette()
+        red, green, blue = _rendered_rgb(0, _COLORFUL_COVER, palette_scheme="triadic")
+        rendered = colorsys.rgb_to_hsv(red / 65535.0, green / 65535.0, blue / 65535.0)
+        assert rendered[1] > 0.0
+        assert rendered[0] in [pytest.approx(_hue_of(color), abs=1e-3) for color in generated]
+
+    @pytest.mark.parametrize("scheme", PALETTE_SCHEMES)
+    def test_every_scheme_renders_a_cycling_palette(self, scheme: str) -> None:
+        """Each scheme leaves at least two lit colors to cycle."""
+        analyzer = _scheme_analyzer(scheme, _COLORFUL_COVER)
+        assert len(analyzer._active_palette()) >= 2
+        assert all(_channel_sum(command) > 0 for command in analyzer.render(now_us=0))
+
+
 class TestScheduledBeatModel:
     """Sanity tests for the internal scheduled-beat dataclass."""
 
@@ -416,15 +560,44 @@ def _channel_sum(command: LightColorCommand) -> int:
     return int(command.red + command.green + command.blue)
 
 
-def _rendered_rgb(vividness: int, palette: dict[str, tuple[int, int, int]]) -> tuple[int, int, int]:
-    """16-bit RGB of the first rendered command for ``palette`` at ``vividness``."""
-    analyzer = HueAudioAnalyzer(_make_channels(1), vividness=vividness)
+def _scheme_analyzer(
+    palette_scheme: str,
+    palette: dict[str, tuple[int, int, int]],
+    vividness: int = DEFAULT_COLOR_VIVIDNESS,
+) -> HueAudioAnalyzer:
+    """One-light analyzer on ``palette_scheme`` that has received ``palette``."""
+    analyzer = HueAudioAnalyzer(
+        _make_channels(1), vividness=vividness, palette_scheme=palette_scheme
+    )
     analyzer.apply_color_palette(dict(palette))
-    command = analyzer.render(now_us=0)[0]
+    return analyzer
+
+
+def _hue(rgb: tuple[int, int, int]) -> float:
+    """HSV hue of an 8-bit RGB color."""
+    return _hue_of((rgb[0] / 255.0, rgb[1] / 255.0, rgb[2] / 255.0))
+
+
+def _hue_of(color: tuple[float, float, float]) -> float:
+    """HSV hue of a float RGB color."""
+    return colorsys.rgb_to_hsv(*color)[0]
+
+
+def _rendered_rgb(
+    vividness: int,
+    palette: dict[str, tuple[int, int, int]],
+    palette_scheme: str = DEFAULT_PALETTE_SCHEME,
+) -> tuple[int, int, int]:
+    """16-bit RGB of the first rendered command for ``palette`` at ``vividness``."""
+    command = _scheme_analyzer(palette_scheme, palette, vividness).render(now_us=0)[0]
     return (command.red, command.green, command.blue)
 
 
-def _rendered_saturation(vividness: int, palette: dict[str, tuple[int, int, int]]) -> float:
+def _rendered_saturation(
+    vividness: int,
+    palette: dict[str, tuple[int, int, int]],
+    palette_scheme: str = DEFAULT_PALETTE_SCHEME,
+) -> float:
     """HSV saturation of the first rendered command for ``palette`` at ``vividness``."""
-    red, green, blue = _rendered_rgb(vividness, palette)
+    red, green, blue = _rendered_rgb(vividness, palette, palette_scheme)
     return colorsys.rgb_to_hsv(red / 65535.0, green / 65535.0, blue / 65535.0)[1]
