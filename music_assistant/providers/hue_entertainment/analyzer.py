@@ -18,6 +18,8 @@ from typing import TYPE_CHECKING
 
 from hue_entertainment import LightColorCommand
 
+from .constants import DEFAULT_COLOR_VIVIDNESS
+
 if TYPE_CHECKING:
     from aiosendspin.models.visualizer import BeatTiming
     from hue_entertainment import LightChannel
@@ -55,9 +57,9 @@ _BLACK_DROP_THRESHOLD = 0.05
 # a hue instead of washing into the neutral path.
 _PALETTE_MIN_SAT = 0.25
 
-# Mild saturation boost applied to every server color so washed-out album
-# palettes still feel saturated on Hue lamps. Hue + value preserved.
-_PALETTE_SATURATION_BOOST = 1.0
+# Saturation boost applied to the finished palette, anchored as (least vivid,
+# default, most vivid) against the vividness setting.
+_PALETTE_BOOST_ANCHORS: tuple[float, float, float] = (0.6, 1.0, 1.6)
 
 # Two chromatic colors whose HSV hue differs by more than this (fraction of the
 # wheel, ~29°) count as separate hue families. Server palettes derive most
@@ -219,8 +221,10 @@ _PER_CHANNEL_MIN_MULT = 0.3
 # kick body (20-130 Hz), so any drum hit drives the saturation, not just
 # sub-bass-heavy genres.
 _BASS_SAT_BINS = 2
-_BASS_SAT_MIN = 0.5
-_BASS_SAT_MAX = 0.85
+# Floor and ceiling of the swing, anchored like the palette boost. They move
+# together so the window slides with vividness without ever narrowing.
+_BASS_SAT_MIN_ANCHORS: tuple[float, float, float] = (0.15, 0.5, 0.65)
+_BASS_SAT_MAX_ANCHORS: tuple[float, float, float] = (0.5, 0.85, 1.0)
 _BASS_BASELINE_SMOOTHING = 0.005  # ~10 s baseline at 20 Hz — lags more
 _BASS_TRANSIENT_SCALE = 10.0
 _BASS_SAT_RISE = 0.8
@@ -247,6 +251,15 @@ class _ScheduledBeat:
     is_downbeat: bool
 
 
+@dataclass(frozen=True, slots=True)
+class _SaturationProfile:
+    """Saturation knobs resolved from the configured vividness."""
+
+    palette_boost: float
+    bass_min: float
+    bass_max: float
+
+
 class _ExpFilter:
     """Exponential smoothing filter with separate attack and decay rates."""
 
@@ -270,19 +283,24 @@ class HueAudioAnalyzer:
         channels: list[LightChannel],
         color_mode: str = DEFAULT_MODE,
         brightness: int = 100,
+        vividness: int = DEFAULT_COLOR_VIVIDNESS,
     ) -> None:
         """
         Initialize the analyzer.
 
         ``color_mode`` selects a preset bundle from `_MODES` (defaults to
         `DEFAULT_MODE` when unknown); reactivity is governed by that preset.
+        ``vividness`` (0-100) scales how saturated the rendered colors are.
         """
         self._channels = channels
         self._color_mode = color_mode
         self._mode = _MODES.get(color_mode, _MODES[DEFAULT_MODE])
         self._brightness = max(0, min(100, brightness)) / 100.0
+        self._saturation = _saturation_profile(vividness)
 
         self._server_palette: dict[str, tuple[int, int, int] | None] = {}
+        # Built on first use, reset whenever an input to it changes.
+        self._palette: list[tuple[float, float, float]] | None = None
         self._beats: deque[_ScheduledBeat] = deque()
         # -1 means no beat seen yet; first beat (or first downbeat) anchors it.
         self._last_beat_in_bar = -1
@@ -303,8 +321,8 @@ class HueAudioAnalyzer:
         # spectrum-driven color reacts on audio time, not network arrival time.
         self._pending_spectrum: deque[tuple[int, list[int]]] = deque()
 
-        # Bass-transient → saturation (1.0 = full color, _BASS_SAT_MIN = dim chroma).
-        self._bass_saturation = _BASS_SAT_MIN
+        # Bass-transient → saturation, swinging over the profile's bass_min..bass_max.
+        self._bass_saturation = self._saturation.bass_min
         self._bass_baseline = 0.0
 
         # Onset peak boost: brief brightness lift applied to every channel.
@@ -330,19 +348,29 @@ class HueAudioAnalyzer:
         self,
         color_mode: str | None = None,
         brightness: int | None = None,
+        vividness: int | None = None,
     ) -> None:
         """Update settings without reset."""
+        self._palette = None
         if color_mode is not None:
             self._color_mode = color_mode
             self._mode = _MODES.get(color_mode, _MODES[DEFAULT_MODE])
         if brightness is not None:
             self._brightness = max(0, min(100, brightness)) / 100.0
+        saturation = self._saturation if vividness is None else _saturation_profile(vividness)
+        if saturation != self._saturation:
+            self._saturation = saturation
+            # Pull the in-flight saturation into the new window at once.
+            self._bass_saturation = min(
+                self._saturation.bass_max, max(self._saturation.bass_min, self._bass_saturation)
+            )
 
     # -- Input events --
 
     def apply_color_palette(self, update: dict[str, tuple[int, int, int] | None]) -> None:
         """Merge a color@v1 server/state update into the cached palette."""
         self._server_palette.update(update)
+        self._palette = None
 
     def apply_spectrum(self, bins: list[int], timestamp_us: int) -> None:
         """
@@ -463,7 +491,8 @@ class HueAudioAnalyzer:
         self._bass_baseline += (bass_energy - self._bass_baseline) * _BASS_BASELINE_SMOOTHING
         bass_transient = max(0.0, bass_energy - self._bass_baseline)
         swing = self._mode.bass_saturation_scale * min(1.0, bass_transient * _BASS_TRANSIENT_SCALE)
-        sat_target = _BASS_SAT_MIN + (_BASS_SAT_MAX - _BASS_SAT_MIN) * swing
+        saturation = self._saturation
+        sat_target = saturation.bass_min + (saturation.bass_max - saturation.bass_min) * swing
         sat_alpha = _BASS_SAT_RISE if sat_target > self._bass_saturation else _BASS_SAT_DECAY
         self._bass_saturation += (sat_target - self._bass_saturation) * sat_alpha
 
@@ -776,14 +805,22 @@ class HueAudioAnalyzer:
         + neighbour-contrast passes: their variation is deliberately subtle and
         those passes would flatten it back into a single color.
         """
+        if self._palette is not None:
+            return self._palette
         raw, synthesized = self._gather_raw_palette()
         ordered = _order_palette(raw)
         max_pulse = max(self._mode.pulse_peak, self._mode.downbeat_pulse_peak)
         equalized = _equalize_palette(ordered, max_pulse)
         if synthesized:
-            return equalized
-        deduped = _drop_close_neighbours(equalized, _PALETTE_DEDUP_DISTANCE)
-        return _enforce_neighbour_contrast(deduped, deduped)
+            palette = equalized
+        else:
+            deduped = _drop_close_neighbours(equalized, _PALETTE_DEDUP_DISTANCE)
+            palette = _enforce_neighbour_contrast(deduped, deduped)
+        # Boosted last, so vividness never changes which colors the passes above
+        # keep; skipped at 1.0, where the HSV round trip would perturb the last bits.
+        boost = self._saturation.palette_boost
+        self._palette = palette if boost == 1.0 else [_boost_saturation(c, boost) for c in palette]
+        return self._palette
 
     def _gather_raw_palette(self) -> tuple[list[tuple[float, float, float]], bool]:
         """
@@ -814,7 +851,8 @@ class HueAudioAnalyzer:
             base = (value[0] / 255.0, value[1] / 255.0, value[2] / 255.0)
             if max(base) < _BLACK_DROP_THRESHOLD:
                 continue
-            bases.append(_boost_saturation(base, _PALETTE_SATURATION_BOOST))
+            # Round-tripped through HSV as always; its last-bit shifts decide ties below.
+            bases.append(colorsys.hsv_to_rgb(*colorsys.rgb_to_hsv(*base)))
         if not bases:
             return list(_NEUTRAL_GRADIENT), True
         chromatic = [c for c in bases if colorsys.rgb_to_hsv(*c)[1] >= _PALETTE_MIN_SAT]
@@ -891,6 +929,39 @@ def _boost_saturation(rgb: tuple[float, float, float], factor: float) -> tuple[f
     r, g, b = rgb
     h, s, v = colorsys.rgb_to_hsv(r, g, b)
     return colorsys.hsv_to_rgb(h, min(1.0, s * factor), v)
+
+
+def _saturation_profile(vividness: int) -> _SaturationProfile:
+    """
+    Resolve the saturation knobs for a vividness percentage.
+
+    :param vividness: Vividness setting (0-100, clamped). `DEFAULT_COLOR_VIVIDNESS`
+        resolves every knob to its middle anchor, i.e. the original look.
+    """
+    fraction = max(0, min(100, vividness)) / 100.0
+    return _SaturationProfile(
+        palette_boost=_interpolate_anchors(_PALETTE_BOOST_ANCHORS, fraction),
+        bass_min=_interpolate_anchors(_BASS_SAT_MIN_ANCHORS, fraction),
+        bass_max=_interpolate_anchors(_BASS_SAT_MAX_ANCHORS, fraction),
+    )
+
+
+def _interpolate_anchors(anchors: tuple[float, float, float], fraction: float) -> float:
+    """
+    Interpolate ``(low, mid, high)`` anchors, with ``mid`` sitting at ``fraction`` 0.5.
+
+    :param anchors: Values at the least vivid, default and most vivid settings.
+    :param fraction: Position in the 0-1 vividness range.
+    """
+    low, mid, high = anchors
+    if fraction <= 0.5:
+        start, end, position = low, mid, fraction * 2.0
+    else:
+        start, end, position = mid, high, (fraction - 0.5) * 2.0
+    # Weighted form rather than start + (end - start) * position: it returns the
+    # anchor itself, bit for bit, at both ends, so the default setting reproduces
+    # the original constants exactly instead of within a rounding error.
+    return start * (1.0 - position) + end * position
 
 
 def _distinct_hue_count(colors: list[tuple[float, float, float]]) -> int:

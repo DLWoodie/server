@@ -15,6 +15,10 @@
       "label": "Mode",
       "description": "Visualization style. Smooth (default): spectrum-driven brightness with a slowly drifting palette. Ambient: colour cycling only, no brightness modulation. Flashing: brightness pulse on every beat, stronger on downbeats. Energetic: large brightness swings on hits plus fast palette rotation."
     },
+    "color_vividness": {
+      "label": "Color vividness",
+      "description": "How saturated the lights render their colors, from pale tints at 0 to full color at 100. The default of 50 keeps the original look; raise it if the lights look washed out."
+    },
     "hue_latency_ms": {
       "label": "Light latency (ms)",
       "description": "Milliseconds to render light updates ahead of the audio, to offset the Hue bridge and DTLS delay. Increase if the lights lag the music, decrease if they run ahead of it."

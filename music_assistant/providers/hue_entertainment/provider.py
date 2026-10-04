@@ -25,13 +25,20 @@ from .constants import (
     CONF_BRIDGE_ID,
     CONF_BRIGHTNESS,
     CONF_COLOR_MODE,
+    CONF_COLOR_VIVIDNESS,
     CONF_HUE_LATENCY_MS,
     CONF_USERNAME,
     DEFAULT_BRIGHTNESS,
     DEFAULT_COLOR_MODE,
+    DEFAULT_COLOR_VIVIDNESS,
     DEFAULT_HUE_LATENCY_MS,
 )
-from .settings import get_brightness, get_color_mode, get_hue_latency_ms
+from .settings import (
+    get_brightness,
+    get_color_mode,
+    get_color_vividness,
+    get_hue_latency_ms,
+)
 
 if TYPE_CHECKING:
     from music_assistant_models.config_entries import ProviderConfig
@@ -79,6 +86,13 @@ class HueEntertainmentProvider(PluginProvider):
                 type=ConfigEntryType.STRING,
                 default_value=DEFAULT_COLOR_MODE,
                 options=[ConfigValueOption(mode, title=mode.capitalize()) for mode in COLOR_MODES],
+                category="settings",
+            ),
+            ConfigEntry(
+                key=CONF_COLOR_VIVIDNESS,
+                type=ConfigEntryType.INTEGER,
+                default_value=DEFAULT_COLOR_VIVIDNESS,
+                range=(0, 100),
                 category="settings",
             ),
             ConfigEntry(
@@ -219,12 +233,19 @@ class HueEntertainmentProvider(PluginProvider):
         # every changed key can be applied in place (anything else, including the
         # log level, still needs the base implementation).
         settings_keys = {
-            f"values/{key}" for key in (CONF_BRIGHTNESS, CONF_COLOR_MODE, CONF_HUE_LATENCY_MS)
+            f"values/{key}"
+            for key in (
+                CONF_BRIGHTNESS,
+                CONF_COLOR_MODE,
+                CONF_COLOR_VIVIDNESS,
+                CONF_HUE_LATENCY_MS,
+            )
         }
         if changed_keys and changed_keys <= settings_keys and self._bridge_manager:
             self._bridge_manager.update_settings(
                 color_mode=get_color_mode(config),
                 brightness=get_brightness(config),
+                vividness=get_color_vividness(config),
                 hue_latency_ms=get_hue_latency_ms(config),
             )
             self.config = config

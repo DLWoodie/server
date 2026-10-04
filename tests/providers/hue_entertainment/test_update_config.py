@@ -1,12 +1,12 @@
 """
 Tests for ``HueEntertainmentProvider.update_config`` routing.
 
-Brightness, colour mode and latency are applied to the running bridges in
-place; anything else falls through to the base implementation, which reloads
-the provider and therefore drops the entertainment session and the virtual
-players. The changed keys are derived from the real ``Config.update()`` here
-rather than hardcoded, so the test keeps tracking the ``values/`` namespacing
-the models package produces.
+Brightness, color mode, vividness and latency are applied to the running
+bridges bridges in place; anything else falls through to the base
+implementation, which reloads the provider and therefore drops the
+entertainment session and the virtual players. The changed keys are derived
+from the real ``Config.update()`` here rather than hardcoded, so the test keeps
+tracking the ``values/`` namespacing the models package produces.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from music_assistant.models.provider import Provider
 from music_assistant.providers.hue_entertainment.constants import (
     CONF_BRIGHTNESS,
     CONF_COLOR_MODE,
+    CONF_COLOR_VIVIDNESS,
     CONF_HUE_LATENCY_MS,
 )
 from music_assistant.providers.hue_entertainment.provider import HueEntertainmentProvider
@@ -78,13 +79,24 @@ async def test_settings_change_applies_in_place() -> None:
     ("update", "expected"),
     [
         ({CONF_COLOR_MODE: "ambient"}, {"color_mode": "ambient"}),
+        ({CONF_COLOR_VIVIDNESS: 100}, {"vividness": 100}),
         ({CONF_HUE_LATENCY_MS: 120}, {"hue_latency_ms": 120}),
         (
-            {CONF_BRIGHTNESS: 0, CONF_COLOR_MODE: "ambient", CONF_HUE_LATENCY_MS: 0},
-            {"brightness": 0, "color_mode": "ambient", "hue_latency_ms": 0},
+            {
+                CONF_BRIGHTNESS: 0,
+                CONF_COLOR_MODE: "ambient",
+                CONF_COLOR_VIVIDNESS: 0,
+                CONF_HUE_LATENCY_MS: 0,
+            },
+            {
+                "brightness": 0,
+                "color_mode": "ambient",
+                "vividness": 0,
+                "hue_latency_ms": 0,
+            },
         ),
     ],
-    ids=["color_mode", "latency", "all_settings_at_zero"],
+    ids=["color_mode", "vividness", "latency", "all_settings_at_once"],
 )
 async def test_every_in_place_setting_skips_the_reload(
     update: dict[str, ConfigValueType], expected: dict[str, ConfigValueType]

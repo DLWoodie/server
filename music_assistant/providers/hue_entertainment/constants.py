@@ -11,6 +11,7 @@ CONF_USERNAME: Final[str] = "hue_username"
 CONF_CLIENTKEY: Final[str] = "hue_clientkey"
 CONF_BRIGHTNESS: Final[str] = "brightness"
 CONF_COLOR_MODE: Final[str] = "color_mode"
+CONF_COLOR_VIVIDNESS: Final[str] = "color_vividness"
 CONF_HUE_LATENCY_MS: Final[str] = "hue_latency_ms"
 
 # Visualization modes; first entry is the default. Used to build the config
@@ -19,6 +20,10 @@ COLOR_MODES: Final[tuple[str, ...]] = ("smooth", "ambient", "flashing", "energet
 DEFAULT_COLOR_MODE: Final[str] = COLOR_MODES[0]
 
 DEFAULT_BRIGHTNESS: Final[int] = 100
+
+# Mid-scale, because the vividness setting is symmetric around the look the
+# provider rendered before it existed.
+DEFAULT_COLOR_VIVIDNESS: Final[int] = 50
 
 DEFAULT_HUE_LATENCY_MS: Final[int] = 20
 

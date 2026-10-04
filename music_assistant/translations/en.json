@@ -1508,6 +1508,8 @@
   "provider.hue_entertainment.config_entries.brightness.label": "Brightness",
   "provider.hue_entertainment.config_entries.color_mode.description": "Visualization style. Smooth (default): spectrum-driven brightness with a slowly drifting palette. Ambient: colour cycling only, no brightness modulation. Flashing: brightness pulse on every beat, stronger on downbeats. Energetic: large brightness swings on hits plus fast palette rotation.",
   "provider.hue_entertainment.config_entries.color_mode.label": "Mode",
+  "provider.hue_entertainment.config_entries.color_vividness.description": "How saturated the lights render their colors, from pale tints at 0 to full color at 100. The default of 50 keeps the original look; raise it if the lights look washed out.",
+  "provider.hue_entertainment.config_entries.color_vividness.label": "Color vividness",
   "provider.hue_entertainment.config_entries.hue_latency_ms.description": "Milliseconds to render light updates ahead of the audio, to offset the Hue bridge and DTLS delay. Increase if the lights lag the music, decrease if they run ahead of it.",
   "provider.hue_entertainment.config_entries.hue_latency_ms.label": "Light latency (ms)",
   "provider.hue_entertainment.config_entries.pair_intro.label": "Enter your Hue Bridge IP address below, then press the round link button on top of the bridge and continue within 30 seconds.",

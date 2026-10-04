@@ -7,9 +7,11 @@ from typing import TYPE_CHECKING
 from .constants import (
     CONF_BRIGHTNESS,
     CONF_COLOR_MODE,
+    CONF_COLOR_VIVIDNESS,
     CONF_HUE_LATENCY_MS,
     DEFAULT_BRIGHTNESS,
     DEFAULT_COLOR_MODE,
+    DEFAULT_COLOR_VIVIDNESS,
     DEFAULT_HUE_LATENCY_MS,
 )
 
@@ -36,6 +38,16 @@ def get_brightness(config: ProviderConfig) -> int:
     value = config.get_value(CONF_BRIGHTNESS)
     # stored numbers can come back as float or str, so normalize before truncating
     return DEFAULT_BRIGHTNESS if value is None else int(float(str(value)))
+
+
+def get_color_vividness(config: ProviderConfig) -> int:
+    """
+    Return the configured vividness percentage.
+
+    :param config: Provider config to read the setting from.
+    """
+    value = config.get_value(CONF_COLOR_VIVIDNESS)
+    return DEFAULT_COLOR_VIVIDNESS if value is None else int(float(str(value)))
 
 
 def get_hue_latency_ms(config: ProviderConfig) -> int:

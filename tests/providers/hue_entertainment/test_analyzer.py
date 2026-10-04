@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import colorsys
+import itertools
 
 import pytest
 from aiosendspin.models.visualizer import BeatTiming
 from hue_entertainment import LightChannel, LightColorCommand
 
+from music_assistant.providers.hue_entertainment import analyzer as analyzer_module
 from music_assistant.providers.hue_entertainment.analyzer import (
     _NEUTRAL_GRADIENT,
     DEFAULT_MODE,
@@ -15,6 +17,7 @@ from music_assistant.providers.hue_entertainment.analyzer import (
     _distinct_hue_count,
     _ScheduledBeat,
 )
+from music_assistant.providers.hue_entertainment.constants import DEFAULT_COLOR_VIVIDNESS
 
 
 def _make_channels(count: int) -> list[LightChannel]:
@@ -27,6 +30,23 @@ def _make_channels(count: int) -> list[LightChannel]:
 def _beat(ts_us: int, *, downbeat: bool = False) -> BeatTiming:
     """Shortcut to build a BeatTiming."""
     return BeatTiming(timestamp_us=ts_us, is_downbeat=downbeat)
+
+
+# A muted two-hue cover: chromatic enough to clear the palette gate, washed
+# enough that the vividness boost has real headroom either side of the default.
+_WASHED_PALETTE: dict[str, tuple[int, int, int]] = {
+    "primary": (204, 148, 133),
+    "accent": (133, 163, 204),
+}
+# The same saturations and spread carried on different hues.
+_WASHED_PALETTE_ROTATED: dict[str, tuple[int, int, int]] = {
+    "primary": (133, 204, 148),
+    "accent": (204, 133, 163),
+}
+_VIVID_PALETTE: dict[str, tuple[int, int, int]] = {
+    "primary": (255, 0, 0),
+    "accent": (0, 0, 255),
+}
 
 
 class TestSettings:
@@ -269,6 +289,118 @@ class TestPeakWalkFallback:
         assert analyzer._peak_palette_position == 0.0
 
 
+class TestVividness:
+    """Tests for the vividness setting that scales rendered saturation."""
+
+    def test_default_resolves_to_the_original_constants(self) -> None:
+        """The default profile is exactly the constants hardcoded before the setting existed."""
+        profile = HueAudioAnalyzer(_make_channels(1))._saturation
+        assert (profile.palette_boost, profile.bass_min, profile.bass_max) == (1.0, 0.5, 0.85)
+
+    def test_default_never_boosts_the_palette(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The default skips the boost, whose HSV round trip would perturb the last bits."""
+
+        def fail(*_args: object) -> None:
+            raise AssertionError("palette boosted at the default vividness")
+
+        monkeypatch.setattr(analyzer_module, "_boost_saturation", fail)
+        analyzer = HueAudioAnalyzer(_make_channels(1))
+        analyzer.apply_color_palette(dict(_WASHED_PALETTE))
+        analyzer.render(now_us=0)
+
+    @pytest.mark.parametrize("vividness", [0, 25, 50, 75, 100])
+    def test_the_bass_swing_never_narrows(self, vividness: int) -> None:
+        """Vividness slides the bass-saturation window; it must never pinch it shut."""
+        default = HueAudioAnalyzer(_make_channels(1))._saturation
+        profile = HueAudioAnalyzer(_make_channels(1), vividness=vividness)._saturation
+        assert profile.bass_max - profile.bass_min == pytest.approx(
+            default.bass_max - default.bass_min
+        )
+
+    def test_full_vividness_reaches_full_color_on_a_hit(self) -> None:
+        """The top of the scale still has somewhere to swing to: full chroma on a bass hit."""
+        assert HueAudioAnalyzer(_make_channels(1), vividness=100)._saturation.bass_max == 1.0
+
+    def test_a_washed_palette_tracks_the_setting_end_to_end(self) -> None:
+        """A low-chroma album follows the slider through the render, past its own saturation."""
+        album = max(
+            colorsys.rgb_to_hsv(*(c / 255.0 for c in rgb))[1] for rgb in _WASHED_PALETTE.values()
+        )
+        pale = _rendered_saturation(0, _WASHED_PALETTE)
+        default = _rendered_saturation(DEFAULT_COLOR_VIVIDNESS, _WASHED_PALETTE)
+        vivid = _rendered_saturation(100, _WASHED_PALETTE)
+        assert pale < default < vivid
+        assert vivid > album
+
+    def test_the_setting_never_reselects_the_palette_algorithm(self) -> None:
+        """Each step of the slider changes chroma a little, never jumping to another palette."""
+        rendered = [_rendered_saturation(v, _WASHED_PALETTE) for v in range(101)]
+        steps = [b - a for a, b in itertools.pairwise(rendered)]
+        assert min(steps) >= 0.0
+        assert max(steps) < 0.02
+
+    def test_two_muted_albums_keep_their_own_hues_at_the_palest_setting(self) -> None:
+        """Turning the setting down pales an album's colors rather than discarding them."""
+        assert _rendered_rgb(0, _WASHED_PALETTE) != _rendered_rgb(0, _WASHED_PALETTE_ROTATED)
+
+    def test_the_bass_floor_is_wired_into_the_render(self) -> None:
+        """A palette already at full chroma clips the boost, leaving only the floor to move."""
+        default = _rendered_saturation(DEFAULT_COLOR_VIVIDNESS, _VIVID_PALETTE)
+        vivid = _rendered_saturation(100, _VIVID_PALETTE)
+        assert vivid > default + 0.05
+
+    @pytest.mark.parametrize(
+        ("vividness", "ceiling"), [(DEFAULT_COLOR_VIVIDNESS, 0.85), (100, 1.0)]
+    )
+    def test_the_bass_ceiling_is_wired_into_the_swing(self, vividness: int, ceiling: float) -> None:
+        """A sustained run of bass hits drives saturation to the configured ceiling."""
+        analyzer = HueAudioAnalyzer(_make_channels(1), vividness=vividness)
+        for frame in range(8):
+            analyzer.apply_spectrum([65535] * 8, timestamp_us=frame * 50_000)
+            analyzer.render(now_us=frame * 50_000)
+        assert analyzer._bass_saturation == pytest.approx(ceiling, abs=1e-3)
+
+    @pytest.mark.parametrize(
+        ("out_of_range", "equivalent"), [(-10, 0), (150, 100)], ids=["below", "above"]
+    )
+    def test_out_of_range_vividness_is_clamped(self, out_of_range: int, equivalent: int) -> None:
+        """Values outside 0-100 resolve to the nearest end of the scale."""
+        channels = _make_channels(1)
+        clamped = HueAudioAnalyzer(channels, vividness=out_of_range)._saturation
+        assert clamped == HueAudioAnalyzer(channels, vividness=equivalent)._saturation
+
+    def test_update_settings_pulls_live_saturation_into_the_new_range(self) -> None:
+        """A live change moves the in-flight saturation rather than leaving it out of bounds."""
+        analyzer = HueAudioAnalyzer(_make_channels(1))
+        analyzer.update_settings(vividness=100)
+        assert analyzer._bass_saturation == analyzer._saturation.bass_min
+        analyzer.update_settings(vividness=0)
+        assert analyzer._bass_saturation == analyzer._saturation.bass_max
+
+    def test_an_unchanged_vividness_leaves_the_live_saturation_alone(self) -> None:
+        """Re-sending the same vividness with another setting does not clamp the swing."""
+        analyzer = HueAudioAnalyzer(_make_channels(1))
+        analyzer._bass_saturation = 0.95
+        analyzer.update_settings(brightness=40, vividness=DEFAULT_COLOR_VIVIDNESS)
+        assert analyzer._bass_saturation == 0.95
+
+    def test_a_live_vividness_change_replaces_the_cached_palette(self) -> None:
+        """A vividness change takes effect on the next render, not the next cover."""
+        analyzer = HueAudioAnalyzer(_make_channels(1))
+        analyzer.apply_color_palette(dict(_WASHED_PALETTE))
+        default = colorsys.rgb_to_hsv(*analyzer._active_palette()[0])[1]
+        analyzer.update_settings(vividness=100)
+        assert colorsys.rgb_to_hsv(*analyzer._active_palette()[0])[1] > default
+
+    def test_a_new_cover_replaces_the_cached_palette(self) -> None:
+        """A color@v1 update takes effect on the next render."""
+        analyzer = HueAudioAnalyzer(_make_channels(1))
+        analyzer.apply_color_palette(dict(_WASHED_PALETTE))
+        before = analyzer._active_palette()
+        analyzer.apply_color_palette(dict(_WASHED_PALETTE_ROTATED))
+        assert analyzer._active_palette() != before
+
+
 class TestScheduledBeatModel:
     """Sanity tests for the internal scheduled-beat dataclass."""
 
@@ -282,3 +414,17 @@ class TestScheduledBeatModel:
 def _channel_sum(command: LightColorCommand) -> int:
     """Total 16-bit energy across a command's RGB channels."""
     return int(command.red + command.green + command.blue)
+
+
+def _rendered_rgb(vividness: int, palette: dict[str, tuple[int, int, int]]) -> tuple[int, int, int]:
+    """16-bit RGB of the first rendered command for ``palette`` at ``vividness``."""
+    analyzer = HueAudioAnalyzer(_make_channels(1), vividness=vividness)
+    analyzer.apply_color_palette(dict(palette))
+    command = analyzer.render(now_us=0)[0]
+    return (command.red, command.green, command.blue)
+
+
+def _rendered_saturation(vividness: int, palette: dict[str, tuple[int, int, int]]) -> float:
+    """HSV saturation of the first rendered command for ``palette`` at ``vividness``."""
+    red, green, blue = _rendered_rgb(vividness, palette)
+    return colorsys.rgb_to_hsv(red / 65535.0, green / 65535.0, blue / 65535.0)[1]

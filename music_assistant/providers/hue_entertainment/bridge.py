@@ -41,7 +41,12 @@ from .constants import (
     SPECTRUM_F_MIN,
     SPECTRUM_SCALE,
 )
-from .settings import get_brightness, get_color_mode, get_hue_latency_ms
+from .settings import (
+    get_brightness,
+    get_color_mode,
+    get_color_vividness,
+    get_hue_latency_ms,
+)
 
 if TYPE_CHECKING:
     from aiosendspin.models.core import ServerStatePayload
@@ -114,6 +119,7 @@ class HueEntertainmentBridge:
             channels=self.area.channels,
             color_mode=get_color_mode(self.provider.config),
             brightness=get_brightness(self.provider.config),
+            vividness=get_color_vividness(self.provider.config),
         )
 
         client_id = f"hue-{self.area.id.replace('-', '')[:16]}"
@@ -213,6 +219,7 @@ class HueEntertainmentBridge:
         self,
         color_mode: str | None = None,
         brightness: int | None = None,
+        vividness: int | None = None,
         hue_latency_ms: int | None = None,
     ) -> None:
         """Update analyzer/bridge settings without restarting the bridge."""
@@ -220,6 +227,7 @@ class HueEntertainmentBridge:
             self._analyzer.update_settings(
                 color_mode=color_mode,
                 brightness=brightness,
+                vividness=vividness,
             )
         if hue_latency_ms is not None:
             self._hue_latency_us = hue_latency_ms * 1000
@@ -495,6 +503,7 @@ class HueEntertainmentBridgeManager:
         self,
         color_mode: str | None = None,
         brightness: int | None = None,
+        vividness: int | None = None,
         hue_latency_ms: int | None = None,
     ) -> None:
         """Update settings on all bridges."""
@@ -502,6 +511,7 @@ class HueEntertainmentBridgeManager:
             bridge.update_settings(
                 color_mode=color_mode,
                 brightness=brightness,
+                vividness=vividness,
                 hue_latency_ms=hue_latency_ms,
             )
 
